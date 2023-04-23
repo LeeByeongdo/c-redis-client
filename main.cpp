@@ -8,9 +8,10 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
-#include <vector>
 #include <string>
-#include <iostream>
+#include <vector>
+// proj
+#include "common.h"
 
 
 static void msg(const char *msg) {
@@ -51,40 +52,28 @@ static int32_t write_all(int fd, const char *buf, size_t n) {
 
 const size_t k_max_msg = 4096;
 
-// the `query` function was simply splited into `send_req` and `read_res`.
 static int32_t send_req(int fd, const std::vector<std::string> &cmd) {
     uint32_t len = 4;
-    for (const std::string &s: cmd) {
+    for (const std::string &s : cmd) {
         len += 4 + s.size();
     }
-
     if (len > k_max_msg) {
         return -1;
     }
 
     char wbuf[4 + k_max_msg];
-    memcpy(&wbuf[0], &len, 4);
+    memcpy(&wbuf[0], &len, 4);  // assume little endian
     uint32_t n = cmd.size();
     memcpy(&wbuf[4], &n, 4);
     size_t cur = 8;
-    for (const std::string &s: cmd) {
+    for (const std::string &s : cmd) {
         uint32_t p = (uint32_t)s.size();
         memcpy(&wbuf[cur], &p, 4);
         memcpy(&wbuf[cur + 4], s.data(), s.size());
         cur += 4 + s.size();
     }
-
     return write_all(fd, wbuf, 4 + len);
 }
-
-
-enum {
-    SER_NIL = 0,
-    SER_ERR = 1,
-    SER_STR = 2,
-    SER_INT = 3,
-    SER_ARR = 4
-};
 
 static int32_t on_response(const uint8_t *data, size_t size) {
     if (size < 1) {
@@ -138,6 +127,17 @@ static int32_t on_response(const uint8_t *data, size_t size) {
                 printf("(int) %ld\n", val);
                 return 1 + 8;
             }
+        case SER_DBL:
+            if (size < 1 + 8) {
+                msg("bad response");
+                return -1;
+            }
+            {
+                double val = 0;
+                memcpy(&val, &data[1], 8);
+                printf("(dbl) %g\n", val);
+                return 1 + 8;
+            }
         case SER_ARR:
             if (size < 1 + 4) {
                 msg("bad response");
@@ -163,7 +163,6 @@ static int32_t on_response(const uint8_t *data, size_t size) {
             return -1;
     }
 }
-
 
 static int32_t read_res(int fd) {
     // 4 bytes header
@@ -202,7 +201,6 @@ static int32_t read_res(int fd) {
     return rv;
 }
 
-
 int main(int argc, char **argv) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -211,7 +209,7 @@ int main(int argc, char **argv) {
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_port = ntohs(8085);
+    addr.sin_port = ntohs(1234);
     addr.sin_addr.s_addr = ntohl(INADDR_LOOPBACK);  // 127.0.0.1
     int rv = connect(fd, (const struct sockaddr *)&addr, sizeof(addr));
     if (rv) {
@@ -222,18 +220,16 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         cmd.push_back(argv[i]);
     }
-
     int32_t err = send_req(fd, cmd);
     if (err) {
         goto L_DONE;
     }
     err = read_res(fd);
-
     if (err) {
         goto L_DONE;
     }
 
-L_DONE:
+    L_DONE:
     close(fd);
     return 0;
 }
